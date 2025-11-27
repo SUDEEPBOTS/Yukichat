@@ -145,7 +145,7 @@ continuing the conversation naturally.
     const reply = await generateWithYuki(finalPrompt);
 
     // save AI reply to memory
-    memory.history.push({ role: "yuki", text: reply });
+    memory.history.push({ role: ".", text: reply });
     if (memory.history.length > 10)
       memory.history = memory.history.slice(-10);
     await memory.save();
