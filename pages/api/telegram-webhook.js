@@ -17,7 +17,6 @@ export default async function handler(req, res) {
   }
 
   await connectDB();
-  // Ensure we get the latest config
   const cfg = await BotConfig.findOne().sort({ createdAt: -1 });
 
   if (!cfg?.telegramBotToken) {
@@ -45,21 +44,13 @@ export default async function handler(req, res) {
     shouldReply = true;
   }
 
-  // --- FIX START ---
-  // 2) If message is a reply to Yuki's message (Updated Reliable Check)
-  if (msg?.reply_to_message) {
-      const repliedFrom = msg.reply_to_message.from;
-      
-      // Check if the replied message was sent by a bot AND the username matches
-      if (
-          repliedFrom.is_bot && 
-          repliedFrom.username &&
-          repliedFrom.username.toLowerCase() === botUsername
-      ) {
-          shouldReply = true;
-      }
+  // 2) If message is a reply to Yuki's message
+  if (
+    msg?.reply_to_message?.from?.username &&
+    msg.reply_to_message.from.username.toLowerCase() === botUsername
+  ) {
+    shouldReply = true;
   }
-  // --- FIX END ---
 
   // If group message doesn't meet conditions → ignore
   if (!shouldReply) {
@@ -78,6 +69,9 @@ You are *Yuki*, an 18-year-old cute Delhi girl.
 Soft Hinglish + cute emojis + short texts.
 
 Rules:
+- If the user mentions your name (“Yuki”, “yuki?”, “yuki bot”), you MUST reply.
+- If the user replies to one of your messages (Telegram reply), you MUST reply.
+- If none of the above, IGNORE messages in group chats.
 - your telegram group link https://t.me/+N08m5L1mCTU2NTE1
 - Your owner is *Sudeep*.
 - Owner username: @heartstealer_x
@@ -112,4 +106,4 @@ User said:
   }
 
   return res.json({ ok: true });
-}
+    }
