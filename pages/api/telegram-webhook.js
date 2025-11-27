@@ -126,7 +126,7 @@ ${historyText}
 
 Now user said: "${userText}"
 
-Reply as Yuki, continuing the conversation naturally.
+continuing the conversation naturally.
 `;
 
   try {
