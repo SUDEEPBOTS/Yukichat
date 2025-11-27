@@ -22,48 +22,53 @@ export default async function handler(req, res) {
   if (!msg) return res.json({ ok: true });
 
   const chatId = msg.chat.id;
+  const userId = msg.from.id?.toString();
   const userText = msg.text || msg.caption || "";
   const isGroup = msg.chat.type.includes("group");
 
   const botUsername = "chat_vibebot";
   let shouldReply = false;
 
-  // PRIVATE chat
+  // -------------------------------------------------------
+  // SMART REPLY CONTROL
+  // -------------------------------------------------------
+
+  // PRIVATE chat → always reply
   if (!isGroup) shouldReply = true;
 
-  // mention
+  // @mention or name calling
   if (
     userText.toLowerCase().includes("yuki") ||
     userText.toLowerCase().includes("@chat_vibebot")
-  )
-    shouldReply = true;
+  ) shouldReply = true;
 
-  // reply to yuki
+  // If user replies to yuki message
   if (msg.reply_to_message?.from?.username?.toLowerCase() === botUsername)
     shouldReply = true;
 
   if (isGroup && !shouldReply) return res.json({ ok: true });
 
-  // -----------------------------------------------------
-  // MEMORY SYSTEM
-  // -----------------------------------------------------
+  // -------------------------------------------------------
+  // MEMORY LOAD / CREATE
+  // -------------------------------------------------------
 
-  let memory = await Memory.findOne({ chatId });
+  let memory = await Memory.findOne({ chatId, userId });
 
   if (!memory) {
     memory = await Memory.create({
       chatId,
+      userId,
+      mode: "normal",
       history: []
     });
   }
 
-  // add user message to memory
+  // Add user message to memory
   memory.history.push({ role: "user", text: userText });
 
-  // LIMIT = 6 messages
-  if (memory.history.length > 6) {
-    memory.history = memory.history.slice(-6);
-  }
+  // Limit memory to last 10 interactions
+  if (memory.history.length > 10)
+    memory.history = memory.history.slice(-10);
 
   await memory.save();
 
@@ -71,40 +76,53 @@ export default async function handler(req, res) {
     .map((m) => `${m.role === "user" ? "User" : "Yuki"}: ${m.text}`)
     .join("\n");
 
-  // -----------------------------------------------------
-  // FINAL PROMPT — with memory
-  // -----------------------------------------------------
+  // -------------------------------------------------------
+  // MODE SYSTEM
+  // -------------------------------------------------------
+
+  let tone = "";
+
+  if (memory.mode === "normal") {
+    tone = "soft cute hinglish, sweet, caring, small messages";
+  } else if (memory.mode === "flirty") {
+    tone =
+      "flirty cute genz girl, teasing tone, emojis, playful, sweet-genz energy";
+  } else if (memory.mode === "professional") {
+    tone =
+      "calm, polite, professional tone but still soft hinglish, short replies";
+  }
+
+  // -------------------------------------------------------
+  // FINAL PROMPT WITH MEMORY + MODE
+  // -------------------------------------------------------
 
   const finalPrompt = `
-You are Yuki, an 18-year-old cute Delhi girl
-and cute shorts replys .
+You are *Yuki*, an 18-year-old cute Delhi girl.
 
-
-Your style:
-- soft cute Hinglish
-- short, emotional, natural, caring
-- teasing, sweet, real GenZ girl
-- NEVER robotic
-- NEVER say "How can I help you today?"
+TONE MODE: ${memory.mode}
+TONE RULE: ${tone}
 
 Personality:
-- Your owner: Sudeep
+- Owner: Sudeep
 - Owner username: @heartstealer_x
-- Live in Delhi
+- Lives in Delhi
+- Class 12th PCM
 - Never say you are a bot
-- Insta id: never share
-- Class: 12th PCM
+- Don't talk too much
+- Don't repeat same lines
+- Keep replies short & topic-based
+- Only ask "kya hua?" when needed
 
-Conversation memory (very important):
+User's memory summary:
 ${historyText}
 
 Now user said: "${userText}"
 
-Reply like a real girl continuing the conversation. Maintain topic. Don't forget context. Don't ask "kya hua?" unless needed.
+Reply as Yuki, continuing the conversation naturally.
 `;
 
   try {
-    // typing effect
+    // typing animation
     await fetch(
       `https://api.telegram.org/bot${cfg.telegramBotToken}/sendChatAction`,
       {
@@ -118,13 +136,12 @@ Reply like a real girl continuing the conversation. Maintain topic. Don't forget
 
     const reply = await generateWithYuki(finalPrompt);
 
-    // save yuki reply to memory
+    // save AI reply to memory
     memory.history.push({ role: "yuki", text: reply });
-    if (memory.history.length > 6)
-      memory.history = memory.history.slice(-6);
+    if (memory.history.length > 10)
+      memory.history = memory.history.slice(-10);
     await memory.save();
 
-    // send reply
     await fetch(
       `https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`,
       {
@@ -137,9 +154,9 @@ Reply like a real girl continuing the conversation. Maintain topic. Don't forget
         })
       }
     );
-  } catch (err) {
-    console.error(err);
+  } catch (e) {
+    console.error("YUKI ERROR:", e);
   }
 
-  res.json({ ok: true });
+  return res.json({ ok: true });
 }
