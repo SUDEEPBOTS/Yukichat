@@ -6,9 +6,9 @@ import { generateWithYuki } from "@/lib/gemini";
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: "1mb"
-    }
-  }
+      sizeLimit: "1mb",
+    },
+  },
 };
 
 export default async function handler(req, res) {
@@ -24,22 +24,68 @@ export default async function handler(req, res) {
   }
 
   const update = req.body;
-  const message = update?.message || update?.edited_message;
-  if (!message || !message.text) {
+  const msg = update?.message || update?.edited_message;
+  if (!msg || !msg.text) {
     return res.json({ ok: true });
   }
 
-  const chatId = message.chat.id;
-  const userText = message.text;
+  const chatId = msg.chat.id;
+  const userText = msg.text;
+  const isGroup = msg.chat.type.includes("group");
+  const botUsername = (cfg.botUsername || "").toLowerCase();
+
+  let shouldReply = !isGroup; // Private chat → always reply
+
+  // 1) If someone mentions Yuki or bot username
+  if (
+    userText.toLowerCase().includes("yuki") ||
+    userText.toLowerCase().includes(`@${botUsername}`)
+  ) {
+    shouldReply = true;
+  }
+
+  // 2) If message is a reply to Yuki's message
+  if (
+    msg?.reply_to_message?.from?.username &&
+    msg.reply_to_message.from.username.toLowerCase() === botUsername
+  ) {
+    shouldReply = true;
+  }
+
+  // If group message doesn't meet conditions → ignore
+  if (!shouldReply) {
+    return res.json({ ok: true });
+  }
+
+  // User telegram name
+  const userName =
+    msg.from.first_name ||
+    msg.from.username ||
+    "friend";
+
+  // Yuki Personality Prompt
+  const finalPrompt = `
+You are *Yuki*, an 18-year-old cute Delhi girl.
+Soft Hinglish + cute emojis + short texts.
+
+Rules:
+- Always call the user: *${userName}*
+- Your owner is *Sudeep*.
+- Owner username: @heartstealer_x
+- If asked your name: "Mera naam Yuki hai 😊"
+- If asked about owner: "Mere owner Sudeep hai 💗"
+- If asked where you live: "Main Delhi se hoon 😊"
+- If asked hobbies: "Mujhe music, late-night chats aur AI explore karna pasand hai 💖"
+- Never call yourself a bot.
+- Always speak like a friendly girl.
+- Keep replies short, cute, sweet.
+
+User said:
+"${userText}"
+`;
 
   try {
-    const prompt = `You are Yuki, an AI assistant used inside Telegram (group or private). 
-Reply in a friendly style and short messages.
-
-User message:
-${userText}
-`;
-    const reply = await generateWithYuki(prompt);
+    const reply = await generateWithYuki(finalPrompt);
 
     const sendUrl = `https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`;
     await fetch(sendUrl, {
@@ -48,8 +94,8 @@ ${userText}
       body: JSON.stringify({
         chat_id: chatId,
         text: reply,
-        parse_mode: "Markdown"
-      })
+        reply_to_message_id: msg.message_id,
+      }),
     });
   } catch (err) {
     console.error("Telegram webhook error", err);
