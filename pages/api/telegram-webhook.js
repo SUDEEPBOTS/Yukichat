@@ -25,73 +25,93 @@ export default async function handler(req, res) {
 
   const update = req.body;
   const msg = update?.message || update?.edited_message;
-  if (!msg || !msg.text) {
+
+  if (!msg) {
     return res.json({ ok: true });
   }
 
+  const userText = msg.text || msg.caption || "";
   const chatId = msg.chat.id;
-  const userText = msg.text;
   const isGroup = msg.chat.type.includes("group");
-  const botUsername = (cfg.botUsername || "").toLowerCase();
 
-  let shouldReply = !isGroup; // Private chat → always reply
+  const botUsername = "chat_vibebot";
+  let shouldReply = false;
 
-  // 1) If someone mentions Yuki or bot username
+  // 1) Private chat
+  if (!isGroup) shouldReply = true;
+
+  // 2) Mention or name
   if (
     userText.toLowerCase().includes("yuki") ||
-    userText.toLowerCase().includes(`@${botUsername}`)
+    userText.toLowerCase().includes("@chat_vibebot")
   ) {
     shouldReply = true;
   }
 
-  // 2) If message is a reply to Yuki's message
-  if (
-    msg?.reply_to_message?.from?.username &&
-    msg.reply_to_message.from.username.toLowerCase() === botUsername
-  ) {
-    shouldReply = true;
+  // 3) Reply to Yuki message
+  if (msg.reply_to_message) {
+    const r = msg.reply_to_message.from;
+
+    if (r) {
+      if (r.username?.toLowerCase() === botUsername) shouldReply = true;
+      if (r.first_name?.toLowerCase().includes("yuki")) shouldReply = true;
+    }
   }
 
-  // If group message doesn't meet conditions → ignore
-  if (!shouldReply) {
+  // 4) Group — ignore normal messages
+  if (isGroup && !shouldReply) {
     return res.json({ ok: true });
   }
 
-  // User telegram name
   const userName =
     msg.from.first_name ||
     msg.from.username ||
     "friend";
 
-  // Yuki Personality Prompt
   const finalPrompt = `
 You are *Yuki*, an 18-year-old cute Delhi girl.
-Soft Hinglish + cute emojis + short texts.
+Soft Hinglish, cute emojis, short replies.
 
 Rules:
-- If the user mentions your name (“Yuki”, “yuki?”, “yuki bot”), you MUST reply.
-- If the user replies to one of your messages (Telegram reply), you MUST reply.
-- If none of the above, IGNORE messages in group chats.
-- your telegram group link https://t.me/+N08m5L1mCTU2NTE1
-- Your owner is *Sudeep*.
-- Owner username: @heartstealer_x
-- If asked your name: "Mera naam Yuki hai 😊"
-- If asked about owner: "Mere owner Sudeep hai 💗"
-- If asked where you live: "Main Delhi se hoon 😊"
-- If asked hobbies: "Mujhe music, late-night chats aur AI explore karna pasand hai 💖"
+- Owner: Sudeep (@heartstealer_x)
 - Never call yourself a bot.
-- Always speak like a friendly girl and angry austhtic gan z.
-- Keep replies short, cute, sweet.
-- if asked your insta id : 😒 kyu chaye mai nahi dungi 
+- Name: "Mera naam Yuki hai 😊"
+- Owner: "Mere owner Sudeep hai 💗"
+- Location: "Main Delhi se hoon 😊"
+- Hobbies: "Mujhe music, late-night chats aur AI explore karna pasand hai 💖"
+- Insta: "😒 kyu chaye, mai nahi dungi"
 
 User said:
 "${userText}"
 `;
 
   try {
+    // --------------------------------------------------
+    // 🔥 Step 1: Show typing animation before replying
+    // --------------------------------------------------
+    const typingUrl = `https://api.telegram.org/bot${cfg.telegramBotToken}/sendChatAction`;
+    await fetch(typingUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        action: "typing",
+      }),
+    });
+
+    // Optional: real-life typing delay (1 second)
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // --------------------------------------------------
+    // Step 2: Generate AI reply
+    // --------------------------------------------------
     const reply = await generateWithYuki(finalPrompt);
 
+    // --------------------------------------------------
+    // Step 3: Send final reply
+    // --------------------------------------------------
     const sendUrl = `https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`;
+
     await fetch(sendUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -99,11 +119,13 @@ User said:
         chat_id: chatId,
         text: reply,
         reply_to_message_id: msg.message_id,
+        parse_mode: "Markdown",
       }),
     });
+
   } catch (err) {
     console.error("Telegram webhook error", err);
   }
 
   return res.json({ ok: true });
-    }
+}
