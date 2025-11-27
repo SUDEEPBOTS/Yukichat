@@ -1,12 +1,11 @@
 // pages/api/telegram-webhook.js
 import { connectDB } from "@/lib/db";
 import BotConfig from "@/models/BotConfig";
+import Memory from "@/models/Memory";
 import { generateWithYuki } from "@/lib/gemini";
 
 export const config = {
-  api: {
-    bodyParser: { sizeLimit: "1mb" }
-  }
+  api: { bodyParser: { sizeLimit: "1mb" } }
 };
 
 export default async function handler(req, res) {
@@ -14,101 +13,130 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Only POST allowed" });
 
   await connectDB();
-  const cfg = await BotConfig.findOne().sort({ createdAt: -1 });
 
-  if (!cfg?.telegramBotToken)
-    return res.status(500).json({ error: "Bot token not configured" });
+  const cfg = await BotConfig.findOne().sort({ createdAt: -1 });
+  if (!cfg?.telegramBotToken) return res.json({ ok: false });
 
   const update = req.body;
   const msg = update.message || update.edited_message;
-
   if (!msg) return res.json({ ok: true });
 
-  const userText = msg.text || msg.caption || "";
   const chatId = msg.chat.id;
+  const userText = msg.text || msg.caption || "";
   const isGroup = msg.chat.type.includes("group");
-  const botUsername = "chat_vibebot";
 
+  const botUsername = "chat_vibebot";
   let shouldReply = false;
 
-  // PRIVATE → always
+  // PRIVATE chat
   if (!isGroup) shouldReply = true;
 
-  // Mention / name
+  // mention
   if (
     userText.toLowerCase().includes("yuki") ||
     userText.toLowerCase().includes("@chat_vibebot")
-  ) {
+  )
     shouldReply = true;
-  }
 
-  // Replying to Yuki
+  // reply to yuki
   if (msg.reply_to_message?.from?.username?.toLowerCase() === botUsername)
     shouldReply = true;
 
-  // Ignore in group unless triggered
   if (isGroup && !shouldReply) return res.json({ ok: true });
 
-  // User name
-  const userName =
-    msg.from.first_name ||
-    msg.from.username ||
-    "friend";
+  // -----------------------------------------------------
+  // MEMORY SYSTEM
+  // -----------------------------------------------------
 
-  // ----------- FIXED SMART PERSONALITY PROMPT -----------
+  let memory = await Memory.findOne({ chatId });
+
+  if (!memory) {
+    memory = await Memory.create({
+      chatId,
+      history: []
+    });
+  }
+
+  // add user message to memory
+  memory.history.push({ role: "user", text: userText });
+
+  // LIMIT = 6 messages
+  if (memory.history.length > 6) {
+    memory.history = memory.history.slice(-6);
+  }
+
+  await memory.save();
+
+  const historyText = memory.history
+    .map((m) => `${m.role === "user" ? "User" : "Yuki"}: ${m.text}`)
+    .join("\n");
+
+  // -----------------------------------------------------
+  // FINAL PROMPT — with memory
+  // -----------------------------------------------------
+
   const finalPrompt = `
-You are *Yuki*, a cute 18-year-old soft Delhi girl.
-Your vibe: caring, cute, teasing, Gen-Z, natural Hinglish, short msgs.
-You secretly have a little attitude but sweet.
+You are Yuki, an 18-year-old cute Delhi girl.
 
-Your character rules:
-- Never call yourself a bot.
-- If someone calls you a bot → "Mai bot nahi hu 😒, ek ladki hu. Samjhe?"
-- Your owner: *Sudeep*
+Your style:
+- soft cute Hinglish
+- short, emotional, natural, caring
+- teasing, sweet, real GenZ girl
+- NEVER robotic
+- NEVER say "How can I help you today?"
+
+Personality:
+- Your owner: Sudeep
 - Owner username: @heartstealer_x
-- If asked your name → "Mera naam Yuki hai 😊"
-- If asked your home → "Main Delhi se hoon 💕"
-- If asked hobbies → "Mujhe music, late-night chats aur AI explore karna pasand hai 💖"
-- If asked for insta → "😒 Kyu chahiye? Nahi dungi."
-- If asked your class → "12th PCM"
-- If asked for Telegram group → "Ye mera GC hai — join karlo 🩷 https://t.me/+N08m5L1mCTU2NTE1"
+- Live in Delhi
+- Never say you are a bot
+- Insta id: never share
+- Class: 12th PCM
 
-Behavior style rules:
-- Reply short, cute, flirty, natural.
-- Never repeat user's entire msg.
-- Always sound like a real girl.
-- Add emojis naturally.
-- Reply relevant to what user actually said.
-- If user flirts → reply cute teasing.
-- If user rude → thoda attitude.
+Conversation memory (very important):
+${historyText}
 
-User message: "${userText}"
-Reply as Yuki:
+Now user said: "${userText}"
+
+Reply like a real girl continuing the conversation. Maintain topic. Don't forget context. Don't ask "kya hua?" unless needed.
 `;
 
   try {
-    // Typing effect
-    await fetch(`https://api.telegram.org/bot${cfg.telegramBotToken}/sendChatAction`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, action: "typing" })
-    });
+    // typing effect
+    await fetch(
+      `https://api.telegram.org/bot${cfg.telegramBotToken}/sendChatAction`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, action: "typing" })
+      }
+    );
 
     await new Promise((r) => setTimeout(r, 900));
 
     const reply = await generateWithYuki(finalPrompt);
 
-    await fetch(`https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: reply,
-        reply_to_message_id: msg.message_id
-      })
-    });
+    // save yuki reply to memory
+    memory.history.push({ role: "yuki", text: reply });
+    if (memory.history.length > 6)
+      memory.history = memory.history.slice(-6);
+    await memory.save();
+
+    // send reply
+    await fetch(
+      `https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: reply,
+          reply_to_message_id: msg.message_id
+        })
+      }
+    );
   } catch (err) {
-    console.error("Telegram webhook error", err);
+    console.error(err);
   }
 
   res.json({ ok: true });
