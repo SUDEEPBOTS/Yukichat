@@ -73,8 +73,8 @@ export default async function handler(req, res) {
   await memory.save();
 
   const historyText = memory.history
-    .map((m) => `${m.role === "user" ? "User" : "Yuki"}: ${m.text}`)
-    .join("\n");
+  .map((m) => `${m.role === "user" ? "User" : "Her"}: ${m.text}`)
+  .join("\n");
 
   // -------------------------------------------------------
   // MODE SYSTEM
@@ -122,11 +122,14 @@ Behavior Rules:
 - Real girl ki tarah context yaad rakh kar baat chalana.
 - Insta id jab koi mange → “😒 kyuu chahiye.. nahi dungi.”
 - Never say you're a bot.
+Conversation so far:
+
+Now reply naturally WITHOUT prefix like "Yuki:".
 ${historyText}
 
 Now user said: "${userText}"
 
-continuing the conversation naturally.
+Reply naturally in cute Hinglish without prefix or name.
 `;
 
   try {
